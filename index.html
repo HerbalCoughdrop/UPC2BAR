@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0a">
+<title>UPC2BAR</title>
+<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;UPC2BAR&quot;,&quot;short_name&quot;:&quot;UPC2BAR&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;#0a0a0a&quot;,&quot;theme_color&quot;:&quot;#0a0a0a&quot;}">
+
+<!-- JsBarcode for barcode generation -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<!-- Tesseract.js for OCR -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
+
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface2: #1e1e1e;
+    --border: #2a2a2a;
+    --accent: #f5c518;
+    --accent2: #ff6b35;
+    --text: #f0f0f0;
+    --text2: #888;
+    --barcode-bg: #ffffff;
+    --safe: env(safe-area-inset-bottom, 0px);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    user-select: none;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    width: 100%;
+  }
+
+  /* ── HEADER ── */
+  #header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #logo {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+  }
+
+  #logo span { color: var(--accent2); }
+
+  #status-pill {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    letter-spacing: 0.05em;
+    transition: all 0.3s;
+  }
+
+  #status-pill.ready { color: #4caf50; border-color: #4caf50; }
+  #status-pill.scanning { color: var(--accent); border-color: var(--accent); }
+  #status-pill.error { color: var(--accent2); border-color: var(--accent2); }
+
+  /* ── CAMERA SECTION ── */
+  #camera-section {
+    flex: 4;
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  #canvas-frozen {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+    display: none;
+  }
+
+  #overlay-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    display: none;
+  }
+
+  /* Tap targets drawn on top of overlay */
+  #tap-targets {
+    position: absolute;
+    inset: 0;
+    display: none;
+  }
+
+  .tap-target {
+    position: absolute;
+    border: 2px solid var(--accent);
+    background: rgba(245, 197, 24, 0.15);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .tap-target:active { background: rgba(245, 197, 24, 0.4); }
+
+  .tap-target-label {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 2px 4px;
+    background: rgba(0,0,0,0.7);
+    border-radius: 2px;
+    max-width: 95%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Camera UI overlays */
+  #tap-hint {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.75);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  #frozen-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(0,0,0,0.85);
+    border-top: 1px solid var(--border);
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    gap: 10px;
+  }
+
+  #frozen-msg {
+    font-size: 12px;
+    color: var(--text2);
+    flex: 1;
+  }
+
+  #btn-scan-again {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+
+  #btn-scan-again:active { background: rgba(245,197,24,0.1); }
+
+  /* OCR loading overlay */
+  #ocr-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  #ocr-overlay.active { display: flex; }
+
+  .spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #ocr-label {
+    font-size: 13px;
+    color: var(--text2);
+    letter-spacing: 0.05em;
+  }
+
+  /* Permission denied */
+  #no-permission {
+    position: absolute;
+    inset: 0;
+    background: var(--surface);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+    text-align: center;
+  }
+
+  #no-permission p {
+    font-size: 14px;
+    color: var(--text2);
+    line-height: 1.6;
+  }
+
+  #btn-settings {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.1em;
+  }
+
+  /* ── DIVIDER ── */
+  #divider {
+    height: 1px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+
+  /* ── INPUT SECTION ── */
+  #input-section {
+    flex-shrink: 0;
+    background: var(--surface);
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #input-label {
+    font-size: 10px;
+    color: var(--text2);
+    letter-spacing: 0.1em;
+    flex-shrink: 0;
+  }
+
+  #upc-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    font-size: 18px;
+    letter-spacing: 0.1em;
+    padding: 8px 10px;
+    outline: none;
+    -webkit-appearance: none;
+    inputmode: numeric;
+  }
+
+  #upc-input:focus { border-color: var(--accent); }
+
+  #btn-clear {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text2);
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  #btn-clear:active { background: var(--surface2); }
+
+  /* ── BARCODE SECTION ── */
+  #barcode-section {
+    flex: 4;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: var(--bg);
+    gap: 10px;
+    padding-bottom: calc(16px + var(--safe));
+  }
+
+  #barcode-hint {
+    font-size: 13px;
+    color: var(--text2);
+    letter-spacing: 0.05em;
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  #barcode-hint .arrow { color: var(--accent); }
+
+  #barcode-wrapper {
+    width: 100%;
+    max-width: 400px;
+    background: var(--barcode-bg);
+    border-radius: 6px;
+    padding: 12px 10px 8px;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #barcode-svg {
+    width: 100%;
+    height: auto;
+  }
+
+  #barcode-number {
+    font-size: 13px;
+    color: #333;
+    letter-spacing: 0.12em;
+    font-family: 'Courier New', monospace;
+  }
+
+  #barcode-format {
+    font-size: 10px;
+    color: #999;
+    letter-spacing: 0.15em;
+  }
+
+  /* Popup chooser */
+  #chooser-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 100;
+    padding-bottom: var(--safe);
+  }
+
+  #chooser-overlay.active { display: flex; }
+
+  #chooser {
+    background: var(--surface);
+    border-radius: 12px 12px 0 0;
+    width: 100%;
+    max-width: 500px;
+    padding: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  #chooser-title {
+    font-size: 12px;
+    color: var(--text2);
+    letter-spacing: 0.1em;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+
+  .chooser-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    color: var(--text);
+    letter-spacing: 0.1em;
+    transition: border-color 0.15s;
+  }
+
+  .chooser-item:active { border-color: var(--accent); background: rgba(245,197,24,0.05); }
+
+  #chooser-cancel {
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text2);
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    padding: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 4px;
+    letter-spacing: 0.05em;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <div id="header">
+    <div id="logo">UPC<span>2</span>BAR</div>
+    <div id="status-pill">LOADING OCR…</div>
+  </div>
+
+  <!-- Camera -->
+  <div id="camera-section" id="cam">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas-frozen"></canvas>
+    <canvas id="overlay-canvas"></canvas>
+    <div id="tap-targets"></div>
+
+    <div id="tap-hint">TAP TO CAPTURE</div>
+
+    <div id="frozen-bar">
+      <div id="frozen-msg">Tap a highlighted number</div>
+      <button id="btn-scan-again">SCAN AGAIN</button>
+    </div>
+
+    <div id="ocr-overlay">
+      <div class="spinner"></div>
+      <div id="ocr-label">READING TEXT…</div>
+    </div>
+
+    <div id="no-permission">
+      <p>Camera access is required.<br>Please allow it in your browser settings.</p>
+      <button id="btn-settings" onclick="window.location.reload()">RELOAD</button>
+    </div>
+  </div>
+
+  <div id="divider"></div>
+
+  <!-- Input -->
+  <div id="input-section">
+    <div id="input-label">UPC</div>
+    <input id="upc-input" type="tel" inputmode="numeric" placeholder="enter or tap above" autocomplete="off" autocorrect="off" spellcheck="false">
+    <button id="btn-clear">×</button>
+  </div>
+
+  <!-- Barcode -->
+  <div id="barcode-section">
+    <div id="barcode-hint">
+      Point camera at Zebra screen<br>
+      <span class="arrow">↑</span> tap to capture <span class="arrow">↑</span>
+    </div>
+    <div id="barcode-wrapper">
+      <svg id="barcode-svg"></svg>
+      <div id="barcode-number"></div>
+      <div id="barcode-format"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Chooser popup -->
+<div id="chooser-overlay">
+  <div id="chooser">
+    <div id="chooser-title">MULTIPLE UPCS FOUND — SELECT ONE</div>
+    <div id="chooser-items"></div>
+    <button id="chooser-cancel">CANCEL</button>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// UPC conversion logic
+// ─────────────────────────────────────────────────────────────────────────────
+
+function upcaCheckDigit(digits11) {
+  let total = 0;
+  for (let i = 0; i < 11; i++) {
+    total += parseInt(digits11[i]) * (i % 2 === 0 ? 3 : 1);
+  }
+  return (10 - (total % 10)) % 10;
+}
+
+function isMeatUpc(harvester) {
+  // Meat/random weight: starts with 002 or 003, last 4+ digits are 0000
+  return harvester.length === 13 &&
+    (harvester.startsWith('002') || harvester.startsWith('003')) &&
+    harvester.endsWith('0000');
+}
+
+function convertHarvester(harvester) {
+  if (harvester.length !== 13) return null;
+
+  if (isMeatUpc(harvester)) {
+    // Meat: 2 + item_code(harv[3:8]) + 00000 + check
+    const itemCode = harvester.substring(3, 8);
+    const core = '2' + itemCode + '00000';  // 11 digits
+    const check = upcaCheckDigit(core);
+    return { upc: core + check, format: 'UPC-A (meat — edit price)', isMeat: true };
+  }
+
+  // Standard: harv[2:13] + check digit
+  const core = harvester.substring(2, 13); // 11 digits
+  const check = upcaCheckDigit(core);
+  return { upc: core + check, format: 'UPC-A', isMeat: false };
+}
+
+function longestDigitRun(text) {
+  const matches = text.match(/\d+/g);
+  if (!matches) return '';
+  return matches.reduce((a, b) => a.length >= b.length ? a : b, '');
+}
+
+function findUpcCandidates(text) {
+  const lines = text.split('\n');
+  const candidates = [];
+  const seen = new Set();
+
+  // Pass 1: lines containing "UPC"
+  for (const line of lines) {
+    if (line.toUpperCase().includes('UPC')) {
+      const digits = longestDigitRun(line);
+      if (digits.length >= 10 && !seen.has(digits)) {
+        seen.add(digits);
+        candidates.push(digits);
+      }
+    }
+  }
+
+  // Pass 2: any run of 10-14 digits
+  const allText = text.replace(/\n/g, ' ');
+  const matches = allText.match(/\d{10,14}/g) || [];
+  for (const m of matches) {
+    if (!seen.has(m)) {
+      seen.add(m);
+      candidates.push(m);
+    }
+  }
+
+  return candidates;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Barcode generation
+// ─────────────────────────────────────────────────────────────────────────────
+
+let debounceTimer = null;
+
+function generateBarcode(upcRaw) {
+  const upc = upcRaw.trim();
+  if (upc.length < 8) {
+    document.getElementById('barcode-wrapper').style.display = 'none';
+    document.getElementById('barcode-hint').style.display = 'block';
+    return;
+  }
+
+  // Determine format
+  let format = 'CODE128';
+  let displayFormat = 'CODE-128';
+
+  if (upc.length === 12) {
+    format = 'upc';
+    displayFormat = 'UPC-A';
+  } else if (upc.length === 13) {
+    format = 'ean13';
+    displayFormat = 'EAN-13';
+  }
+
+  try {
+    JsBarcode('#barcode-svg', upc, {
+      format: format,
+      lineColor: '#000000',
+      background: '#ffffff',
+      width: 2,
+      height: 80,
+      displayValue: false,
+      margin: 8,
+      valid: () => true
+    });
+
+    document.getElementById('barcode-number').textContent = upc;
+    document.getElementById('barcode-format').textContent = displayFormat;
+    document.getElementById('barcode-wrapper').style.display = 'flex';
+    document.getElementById('barcode-hint').style.display = 'none';
+  } catch (e) {
+    // Fallback to CODE128 if format rejects input
+    try {
+      JsBarcode('#barcode-svg', upc, {
+        format: 'CODE128',
+        lineColor: '#000000',
+        background: '#ffffff',
+        width: 2,
+        height: 80,
+        displayValue: false,
+        margin: 8
+      });
+      document.getElementById('barcode-number').textContent = upc;
+      document.getElementById('barcode-format').textContent = 'CODE-128';
+      document.getElementById('barcode-wrapper').style.display = 'flex';
+      document.getElementById('barcode-hint').style.display = 'none';
+    } catch (e2) {
+      console.error('Barcode generation failed:', e2);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Input field
+// ─────────────────────────────────────────────────────────────────────────────
+
+const upcInput = document.getElementById('upc-input');
+
+upcInput.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => generateBarcode(upcInput.value), 300);
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  upcInput.value = '';
+  document.getElementById('barcode-wrapper').style.display = 'none';
+  document.getElementById('barcode-hint').style.display = 'block';
+});
+
+function setUpcValue(raw) {
+  // Try to convert as harvester number first
+  if (raw.length === 13) {
+    const converted = convertHarvester(raw);
+    if (converted) {
+      upcInput.value = converted.upc;
+      generateBarcode(converted.upc);
+
+      if (converted.isMeat) {
+        // Focus input so user can edit price digits
+        setTimeout(() => {
+          upcInput.focus();
+          // Place cursor before the last digit (check digit)
+          upcInput.setSelectionRange(6, 11);
+        }, 100);
+      }
+      return;
+    }
+  }
+  // Use as-is
+  upcInput.value = raw;
+  generateBarcode(raw);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Camera + OCR
+// ─────────────────────────────────────────────────────────────────────────────
+
+const video = document.getElementById('video');
+const canvasFrozen = document.getElementById('canvas-frozen');
+const tapTargets = document.getElementById('tap-targets');
+const tapHint = document.getElementById('tap-hint');
+const frozenBar = document.getElementById('frozen-bar');
+const ocrOverlay = document.getElementById('ocr-overlay');
+const noPermission = document.getElementById('no-permission');
+const statusPill = document.getElementById('status-pill');
+const cameraSection = document.getElementById('camera-section');
+
+let isFrozen = false;
+let tesseractWorker = null;
+let ocrReady = false;
+
+async function initTesseract() {
+  statusPill.textContent = 'LOADING OCR…';
+  statusPill.className = '';
+  try {
+    tesseractWorker = await Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          document.getElementById('ocr-label').textContent =
+            'READING… ' + Math.round(m.progress * 100) + '%';
+        }
+      }
+    });
+    await tesseractWorker.setParameters({
+      tessedit_char_whitelist: '0123456789UPCupc: ',
+    });
+    ocrReady = true;
+    statusPill.textContent = 'READY';
+    statusPill.className = 'ready';
+  } catch (e) {
+    statusPill.textContent = 'OCR ERROR';
+    statusPill.className = 'error';
+    console.error('Tesseract init failed:', e);
+  }
+}
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.style.display = 'block';
+    noPermission.style.display = 'none';
+  } catch (e) {
+    video.style.display = 'none';
+    noPermission.style.display = 'flex';
+    statusPill.textContent = 'NO CAMERA';
+    statusPill.className = 'error';
+  }
+}
+
+function captureFrame() {
+  if (isFrozen || !video.srcObject) return;
+
+  const w = video.videoWidth || 640;
+  const h = video.videoHeight || 480;
+  canvasFrozen.width = w;
+  canvasFrozen.height = h;
+
+  const ctx = canvasFrozen.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+
+  isFrozen = true;
+  canvasFrozen.style.display = 'block';
+  video.style.display = 'none';
+  tapHint.style.display = 'none';
+  frozenBar.style.display = 'flex';
+  ocrOverlay.classList.add('active');
+  statusPill.textContent = 'SCANNING…';
+  statusPill.className = 'scanning';
+
+  runOCR(canvasFrozen, w, h);
+}
+
+async function runOCR(canvas, imgW, imgH, attempt = 0) {
+  if (!ocrReady) {
+    document.getElementById('ocr-label').textContent = 'OCR not ready yet…';
+    return;
+  }
+
+  try {
+    const { data } = await tesseractWorker.recognize(canvas);
+    const text = data.text;
+
+    ocrOverlay.classList.remove('active');
+
+    const candidates = findUpcCandidates(text);
+
+    if (candidates.length === 0 && attempt === 0) {
+      // Retry once
+      document.getElementById('ocr-label').textContent = 'RETRYING…';
+      ocrOverlay.classList.add('active');
+      setTimeout(() => runOCR(canvas, imgW, imgH, 1), 600);
+      return;
+    }
+
+    if (candidates.length === 0) {
+      document.getElementById('frozen-msg').textContent = 'No numbers found — try again';
+      statusPill.textContent = 'READY';
+      statusPill.className = 'ready';
+      return;
+    }
+
+    // Draw tap targets from OCR word bounding boxes
+    drawTapTargets(data, imgW, imgH);
+
+    if (candidates.length === 1) {
+      setUpcValue(candidates[0]);
+      resumePreview();
+    } else {
+      showChooser(candidates);
+    }
+
+    statusPill.textContent = 'READY';
+    statusPill.className = 'ready';
+
+  } catch (e) {
+    ocrOverlay.classList.remove('active');
+    document.getElementById('frozen-msg').textContent = 'OCR error — try again';
+    statusPill.textContent = 'ERROR';
+    statusPill.className = 'error';
+    console.error('OCR error:', e);
+  }
+}
+
+function drawTapTargets(data, imgW, imgH) {
+  tapTargets.innerHTML = '';
+  tapTargets.style.display = 'block';
+
+  const dispW = canvasFrozen.offsetWidth || cameraSection.offsetWidth;
+  const dispH = canvasFrozen.offsetHeight || cameraSection.offsetHeight;
+
+  // fitCenter scaling
+  const imgAspect = imgW / imgH;
+  const dispAspect = dispW / dispH;
+  let scaleX, scaleY, offX, offY;
+
+  if (imgAspect > dispAspect) {
+    scaleX = dispW / imgW; scaleY = scaleX;
+    offX = 0; offY = (dispH - imgH * scaleY) / 2;
+  } else {
+    scaleY = dispH / imgH; scaleX = scaleY;
+    offX = (dispW - imgW * scaleX) / 2; offY = 0;
+  }
+
+  // Group words by line and only show numeric blocks
+  const words = data.words || [];
+  for (const word of words) {
+    const text = word.text.trim();
+    const digits = longestDigitRun(text);
+    if (digits.length < 6) continue; // Skip short runs
+
+    const { x0, y0, x1, y1 } = word.bbox;
+    const left   = x0 * scaleX + offX;
+    const top    = y0 * scaleY + offY;
+    const width  = (x1 - x0) * scaleX;
+    const height = (y1 - y0) * scaleY;
+
+    const div = document.createElement('div');
+    div.className = 'tap-target';
+    div.style.left   = left + 'px';
+    div.style.top    = top + 'px';
+    div.style.width  = Math.max(width, 60) + 'px';
+    div.style.height = Math.max(height, 32) + 'px';
+
+    const label = document.createElement('div');
+    label.className = 'tap-target-label';
+    label.textContent = digits;
+    div.appendChild(label);
+
+    div.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setUpcValue(digits);
+      resumePreview();
+    });
+
+    tapTargets.appendChild(div);
+  }
+}
+
+function resumePreview() {
+  isFrozen = false;
+  canvasFrozen.style.display = 'none';
+  video.style.display = 'block';
+  tapHint.style.display = 'block';
+  frozenBar.style.display = 'none';
+  tapTargets.style.display = 'none';
+  tapTargets.innerHTML = '';
+}
+
+cameraSection.addEventListener('click', () => {
+  if (!isFrozen) captureFrame();
+});
+
+document.getElementById('btn-scan-again').addEventListener('click', (e) => {
+  e.stopPropagation();
+  resumePreview();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chooser popup
+// ─────────────────────────────────────────────────────────────────────────────
+
+function showChooser(candidates) {
+  const overlay = document.getElementById('chooser-overlay');
+  const items = document.getElementById('chooser-items');
+  items.innerHTML = '';
+
+  for (const c of candidates) {
+    const btn = document.createElement('div');
+    btn.className = 'chooser-item';
+    btn.textContent = c;
+    btn.addEventListener('click', () => {
+      hideChooser();
+      setUpcValue(c);
+      resumePreview();
+    });
+    items.appendChild(btn);
+  }
+
+  overlay.classList.add('active');
+}
+
+function hideChooser() {
+  document.getElementById('chooser-overlay').classList.remove('active');
+}
+
+document.getElementById('chooser-cancel').addEventListener('click', hideChooser);
+document.getElementById('chooser-overlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) hideChooser();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────────────────────
+
+(async () => {
+  await Promise.all([startCamera(), initTesseract()]);
+})();
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(() => console.log('UPC2BAR SW registered'))
+      .catch(e => console.error('SW error:', e));
+  });
+}
+</script>
+</body>
+</html>
